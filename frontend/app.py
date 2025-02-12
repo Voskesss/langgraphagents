@@ -5,21 +5,24 @@ import os
 # Voeg de root directory toe aan de Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agents.basic_agent import stel_vraag
+from agents.research_agents import process_query
 import uuid
 
 # Pagina configuratie
 st.set_page_config(
-    page_title="LangChain Agent Chat",
-    page_icon="🤖",
+    page_title="Web Research Assistant",
+    page_icon="🔍",
     layout="centered"
 )
 
 # Titel en uitleg
-st.title("🤖 LangChain Agent Chat")
+st.title("🔍 Web Research Assistant")
 st.markdown("""
-Deze chatbot kan vragen beantwoorden en informatie opzoeken. 
-Stel een vraag en de agent zal zijn best doen om te helpen!
+Deze assistant kan het web doorzoeken en de resultaten verwerken in een mooie PDF.
+Geef een onderwerp of vraag op, en de assistant zal:
+1. Het web doorzoeken voor relevante informatie
+2. De informatie analyseren en structureren
+3. Een professioneel opgemaakte PDF genereren
 """)
 
 # Initialiseer session state voor chat history
@@ -30,7 +33,7 @@ if "thread_id" not in st.session_state:
     st.session_state.thread_id = str(uuid.uuid4())
 
 # Chat input
-vraag = st.chat_input("Stel je vraag hier...")
+vraag = st.chat_input("Waar wil je meer over weten?")
 
 # Toon chat history
 for message in st.session_state.messages:
@@ -46,22 +49,44 @@ if vraag:
     # Voeg vraag toe aan history
     st.session_state.messages.append({"role": "user", "content": vraag})
     
-    # Toon "aan het denken" indicator
+    # Toon "aan het werk" indicator
     with st.chat_message("assistant"):
-        with st.spinner("Even denken..."):
-            # Haal antwoord op van de agent
-            antwoord = stel_vraag(vraag, thread_id=st.session_state.thread_id)
-            st.write(antwoord)
+        with st.spinner("Even zoeken en verwerken..."):
+            # Verwerk de vraag door de multi-agent workflow
+            result = process_query(vraag, thread_id=st.session_state.thread_id)
+            
+            # Toon resultaat en PDF link
+            if "pdf_content" in result and "path" in result["pdf_content"]:
+                pdf_path = result["pdf_content"]["path"]
+                st.success(f"Onderzoek voltooid! De resultaten zijn opgeslagen in: {pdf_path}")
+                
+                # Als de PDF bestaat, toon een download knop
+                if os.path.exists(pdf_path):
+                    with open(pdf_path, "rb") as pdf_file:
+                        st.download_button(
+                            label="Download PDF Rapport",
+                            data=pdf_file,
+                            file_name="research_report.pdf",
+                            mime="application/pdf"
+                        )
+            else:
+                st.error("Er is iets misgegaan bij het genereren van de PDF.")
     
     # Voeg antwoord toe aan history
-    st.session_state.messages.append({"role": "assistant", "content": antwoord})
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": "Onderzoek voltooid en PDF rapport gegenereerd!"
+    })
 
 # Sidebar met extra opties
 with st.sidebar:
-    st.header("Chat Opties")
+    st.header("Opties")
     
     # Knop om chat te resetten
-    if st.button("Begin nieuwe chat"):
+    if st.button("Begin nieuw onderzoek"):
         st.session_state.messages = []
         st.session_state.thread_id = str(uuid.uuid4())
+        # Verwijder oude PDF bestanden
+        if os.path.exists("output.pdf"):
+            os.remove("output.pdf")
         st.rerun()
