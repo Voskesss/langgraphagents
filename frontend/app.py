@@ -1,12 +1,12 @@
 import streamlit as st
 import sys
 import os
+import uuid
 
 # Voeg de root directory toe aan de Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agents.research_agents import process_query
-import uuid
+from agents.research_agents import process_query_external
 
 # Pagina configuratie
 st.set_page_config(
@@ -53,11 +53,11 @@ if vraag:
     with st.chat_message("assistant"):
         with st.spinner("Even zoeken en verwerken..."):
             # Verwerk de vraag door de multi-agent workflow
-            result = process_query(vraag, thread_id=st.session_state.thread_id)
+            result = process_query_external(vraag, thread_id=st.session_state.thread_id)
             
             # Toon resultaat en PDF link
-            if "pdf_content" in result and "path" in result["pdf_content"]:
-                pdf_path = result["pdf_content"]["path"]
+            if "pdf_path" in result:
+                pdf_path = result["pdf_path"]
                 st.success(f"Onderzoek voltooid! De resultaten zijn opgeslagen in: {pdf_path}")
                 
                 # Als de PDF bestaat, toon een download knop
