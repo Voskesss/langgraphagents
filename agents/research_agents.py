@@ -19,7 +19,9 @@ load_dotenv()
 
 # Definieer de state structuur
 class State(TypedDict):
-    messages: Annotated[list, add_messages]
+    messages: Annotated[list[BaseMessage], add_messages]
+    research_results: str
+    pdf_path: str
 
 # Initialiseer de agents
 web_research_agent = ChatAnthropic(
@@ -43,98 +45,75 @@ def web_research(state: State) -> Dict[str, Any]:
     if not isinstance(last_message, HumanMessage):
         return {"messages": [AIMessage(content="Ik kan alleen reageren op gebruikersvragen.")]}
     
-    # Stap 1: Interpreteer de vraag
-    interpret_message = HumanMessage(content=f"""
-    Je bent een onderzoeksassistent. Interpreteer deze vraag en bedenk gerichte zoektermen:
-
-    VRAAG: {last_message.content}
-
-    1. Wat wil de gebruiker precies weten?
-    2. Welke specifieke zoektermen zijn relevant?
-    3. Geef een lijst van 2-3 concrete zoektermen.
-
-    Geef je antwoord in dit formaat:
-    {{
-        "doel": "wat de gebruiker wil weten",
-        "zoektermen": ["term1", "term2", "term3"]
-    }}
-
-    Gebruik ALLEEN JSON, geen andere tekst.
-    """)
-    
-    interpret_response = web_research_agent.invoke([interpret_message])
-    logger.info(f"Interpretatie resultaat: {interpret_response.content}")
-    
     try:
-        # Parse de JSON response
-        if isinstance(interpret_response.content, str):
-            search_info = json.loads(interpret_response.content)
-        else:
-            for item in interpret_response.content:
-                if isinstance(item, dict) and 'text' in item:
-                    search_info = json.loads(item['text'])
-                    break
-        
-        # Voer searches uit voor elke zoekterm
-        all_results = []
-        for term in search_info["zoektermen"]:
-            # Gebruik direct de search_web tool
-            results = search_web(term)
-            all_results.append(results)
-            logger.info(f"Zoekresultaten voor '{term}': {results}")
+        # Direct zoeken met de vraag
+        results = search_web(last_message.content)
+        logger.info(f"Zoekresultaten: {results}")
         
         # Laat de agent de resultaten analyseren
         analyze_message = HumanMessage(content=f"""
-        Analyseer deze zoekresultaten voor de originele vraag:
-
+        Je bent een onderzoeksassistent. Analyseer deze zoekresultaten en maak een gestructureerd rapport.
+        
         VRAAG: {last_message.content}
-        DOEL: {search_info["doel"]}
         
         RESULTATEN:
-        {json.dumps(all_results, indent=2)}
-
-        Maak een JSON rapport met deze structuur:
+        {results}
+        
+        Maak een rapport in dit JSON formaat:
         {{
-            "title": "Een titel die de vraag beantwoordt",
+            "title": "Een duidelijke titel die de vraag samenvat",
             "sections": {{
-                "Samenvatting": "Kort overzicht van de bevindingen",
-                "Belangrijkste Resultaten": "Concrete feiten en data",
-                "Context en Details": "Achtergrond en extra informatie",
-                "Bronnen": "Lijst van gebruikte bronnen"
+                "Samenvatting": "Korte samenvatting van de bevindingen",
+                "Belangrijkste Resultaten": "Belangrijkste feiten en data",
+                "Context en Details": "Meer gedetailleerde informatie",
+                "Bronnen": "Lijst van gebruikte bronnen met URLs"
             }}
         }}
-
-        Belangrijk:
-        1. Focus op het beantwoorden van de originele vraag
-        2. Gebruik ALLEEN informatie uit de zoekresultaten
-        3. Als je iets niet weet, zeg dat eerlijk
-        4. Geen placeholders of algemene tekst gebruiken
-        5. Als er geen relevante resultaten zijn, zeg dat dan expliciet
+        
+        Geef ALLEEN de JSON terug, geen andere tekst.
         """)
         
         analysis_response = web_research_agent.invoke([analyze_message])
-        logger.info(f"Analyse resultaat: {analysis_response.content}")
+        logger.info(f"Analyse resultaat: {analysis_response}")
         
-        # Valideer dat er geen standaardtekst wordt gebruikt
-        if "zeespiegel" in analysis_response.content.lower():
-            raise ValueError("Agent gebruikt standaardtekst over zeespiegelstijging")
+        # Probeer de JSON te parsen uit de response
+        try:
+            content = analysis_response.content
+            # Verwijder eventuele markdown code blocks
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+                
+            # Valideer de JSON
+            parsed = json.loads(content)
+            if not isinstance(parsed, dict):
+                raise ValueError("Response moet een dictionary zijn")
+                
+            if "title" not in parsed or "sections" not in parsed:
+                raise ValueError("Response mist verplichte velden 'title' of 'sections'")
+                
+            required_sections = ["Samenvatting", "Belangrijkste Resultaten", "Context en Details", "Bronnen"]
+            for section in required_sections:
+                if section not in parsed["sections"]:
+                    raise ValueError(f"Response mist verplichte sectie: {section}")
             
-        if "klimaat" in analysis_response.content.lower():
-            raise ValueError("Agent gebruikt standaardtekst over klimaatverandering")
-        
-        return {
-            "messages": messages + [analysis_response],
-            "research_results": analysis_response.content
-        }
-        
-    except json.JSONDecodeError as e:
-        error_msg = f"Error bij verwerken van zoekresultaten: {str(e)}"
-        logger.error(error_msg)
-        return {
-            "messages": messages + [AIMessage(content=error_msg)]
-        }
+            # Geef de research results door aan de volgende agent
+            logger.info("Research resultaten succesvol gegenereerd")
+            return {
+                "messages": messages + [AIMessage(content="Onderzoek voltooid, nu maken we er een PDF van.")],
+                "research_results": content  # De JSON string voor de PDF agent
+            }
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error: {str(e)}")
+            logger.error(f"Content was: {content}")
+            return {
+                "messages": messages + [AIMessage(content=f"Error bij verwerken van onderzoeksresultaten: {str(e)}")]
+            }
+            
     except Exception as e:
-        error_msg = f"Onverwachte error: {str(e)}"
+        error_msg = f"Error bij web research: {str(e)}"
         logger.error(error_msg)
         return {
             "messages": messages + [AIMessage(content=error_msg)]
@@ -147,54 +126,19 @@ def format_pdf(state: State) -> Dict[str, Any]:
     
     logger.info(f"Ontvangen research resultaten voor PDF: {research_results}")
     
-    # Laat de agent de PDF structureren en opmaken
-    format_message = HumanMessage(content=f"""
-    Je bent een documentspecialist. Verwerk deze onderzoeksresultaten in een professioneel PDF rapport:
-
-    {research_results}
-
-    Maak een JSON string met deze exacte structuur:
-    {{
-        "title": "Een specifieke titel gebaseerd op het onderwerp",
-        "sections": {{
-            "Samenvatting": "Korte overview van de concrete bevindingen",
-            "Belangrijkste Resultaten": "Gedetailleerde uitwerking met specifieke feiten en data",
-            "Context en Details": "Relevante achtergrond en aanvullende informatie",
-            "Bronnen": "Lijst van gebruikte bronnen met URLs indien beschikbaar"
-        }}
-    }}
-
-    Belangrijk:
-    1. Gebruik ALLEEN informatie uit de onderzoeksresultaten
-    2. Vul ALLE secties met concrete, specifieke informatie
-    3. GEEN placeholders of algemene tekst
-    4. Zorg dat elke sectie minimaal 2-3 zinnen bevat
-    """)
-    
-    ai_message = pdf_formatting_agent.invoke([format_message])
-    logger.info(f"PDF formatting resultaat: {ai_message.content}")
-    
-    # Parse de JSON output en maak de PDF
-    try:
-        content = ""
-        if isinstance(ai_message.content, list):
-            for item in ai_message.content:
-                if isinstance(item, dict) and item.get('type') == 'tool_use':
-                    content = item.get('input', {}).get('content', '')
-                    logger.info("Content gevonden in tool gebruik")
-                    break
-        else:
-            content = ai_message.content
-            
-        logger.info(f"Content voor PDF generatie: {content}")
-        
-        # Valideer dat er geen placeholders zijn
-        if '[' in content or ']' in content:
-            raise ValueError("PDF content bevat nog placeholders")
-            
-        pdf_path = generate_pdf(content)
+    # Controleer of we geldige research results hebben
+    if not research_results:
         return {
-            "messages": messages + [ai_message],
+            "messages": messages + [AIMessage(content="Geen onderzoeksresultaten om te verwerken")]
+        }
+    
+    try:
+        # Gebruik de generate_pdf tool direct
+        pdf_path = generate_pdf(research_results)
+        logger.info(f"PDF gegenereerd op pad: {pdf_path}")
+            
+        return {
+            "messages": messages + [AIMessage(content=f"PDF succesvol gegenereerd: {pdf_path}")],
             "pdf_path": pdf_path
         }
         
@@ -289,13 +233,11 @@ workflow = StateGraph(State)
 # Voeg nodes toe
 workflow.add_node("web_research", web_research)
 workflow.add_node("format_pdf", format_pdf)
-workflow.add_node("process_query", process_query)
 
 # Definieer edges
 workflow.add_edge(START, "web_research")
 workflow.add_edge("web_research", "format_pdf")
-workflow.add_edge("format_pdf", "process_query")
-workflow.add_edge("process_query", END)
+workflow.add_edge("format_pdf", END)
 
 # Compileer de graph
 agent_workflow = workflow.compile()
