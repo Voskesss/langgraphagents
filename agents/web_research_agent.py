@@ -3,10 +3,11 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_anthropic import ChatAnthropic
 import os
 from dotenv import load_dotenv
-import logging
 import json
+import logging
 
-from tools import search_web, fetch_webpage_content
+# Update imports naar nieuwe locatie
+from agents.tools.web_tools import search_web, fetch_webpage_content
 
 # Configureer logging
 logging.basicConfig(level=logging.INFO)

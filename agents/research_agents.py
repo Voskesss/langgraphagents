@@ -8,7 +8,8 @@ from dotenv import load_dotenv
 import json
 import logging
 
-from tools import search_web, fetch_webpage_content, generate_pdf
+from agents.tools.web_tools import search_web, fetch_webpage_content
+from agents.tools.pdf_tools import generate_pdf
 
 # Configureer logging
 logging.basicConfig(level=logging.INFO)
